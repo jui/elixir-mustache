@@ -42,7 +42,7 @@ defmodule Mustache.Utils do
   def to_binary(other), do: Kernel.to_string(other)
 
   defp split_float(bin) do
-    String.to_char_list!(bin)
+    String.to_char_list(bin)
     |> :lists.reverse
     |> split_float(0, '')
   end
