@@ -34,11 +34,12 @@ defmodule Mustache.Utils do
   defp is_keyword_tuple?({ x, _ }) when is_atom(x), do: true
   defp is_keyword_tuple?(_), do: false
 
-  def to_binary(float) when is_float(float) do
-    bin = round(float * 100000000000000) |> Kernel.to_string
-    { integer, decimal } = split_float(bin)
-    Kernel.to_string([integer, ".", decimal])
-  end
+#  def to_binary(float) when is_float(float) do
+#    
+#    bin = round(float * 100000000000000) |> Kernel.to_string
+#    { integer, decimal } = split_float(bin)
+#    Kernel.to_string([integer, ".", decimal])
+#  end
   def to_binary(other), do: Kernel.to_string(other)
 
   defp split_float(bin) do
