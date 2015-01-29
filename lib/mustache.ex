@@ -28,8 +28,8 @@ defmodule Mustache do
 
   """
   def render_string(source, bindings \\ [], options \\ []) do
-    compiled = compile_string(source, options)
-    do_eval(compiled, bindings, options)
+    compiled = compile_string(source, bindings, options)
+#    do_eval(compiled, bindings, options)
   end
 
   @doc """
@@ -50,40 +50,19 @@ defmodule Mustache do
   end
 
   @doc """
-  Get a quoted expression as a `template` and evaluate the values using the `bindings`.
-  """
-  def render_compiled_template(template, bindings, options \\ []) do
-    do_eval(template, bindings, options)
-  end
-
-  @doc """
-  Get a string `source` and generate a quoted expression.
-  This is an alias of `compile_string`.
-  """
-  def compile(source, options \\ []) do
-    compile_string(source, options)
-  end
-
-  @doc """
   Get a string `source` and generate a quoted expression.
   """
-  def compile_string(source, options \\ []) do
-    Mustache.Compiler.compile(source, options)
+  def compile_string(source, bindings, options \\ []) do
+    Mustache.Compiler.compile(source, bindings, options)
   end
 
-  @doc """
-  Get a `filename` and generate a quoted expression.
-  """
-  def compile_file(filename, options \\ []) do
-    compile_string(File.read!(filename), options)
-  end
 
-  defp to_context(bindings) do
-    [mustache_root: [bindings]]
-  end
+#  defp to_context(bindings) do
+#    [mustache_root: [bindings]]
+#  end
 
-  defp do_eval(compiled, bindings, options) do
-    { result, _ } = Code.eval_quoted(compiled, to_context(bindings), options)
-    result
-  end
+#  defp do_eval(compiled, bindings, options) do
+#    { result, _ } = Code.eval_quoted(compiled, to_context(bindings), options)
+#    result
+#  end
 end

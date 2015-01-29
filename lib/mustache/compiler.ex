@@ -1,317 +1,103 @@
 defmodule Mustache.Compiler do
-  @moduledoc false
 
-  def compile(source, options) do
+  def compile(source, bindings, options) do
     line = options[:line] || 1
     tokens = Mustache.Tokenizer.tokenize(source, line)
 
     partials = options[:partials] || []
+    partials = Enum.map partials, fn({ k,partial}) -> { k, Mustache.Tokenizer.tokenize(partial, line) } end
 
-    partials = Enum.map partials, fn({ k, partial }) -> { k, Mustache.Tokenizer.tokenize(partial, line) } end
-
-    { [], buffer, inner_vars } = generate_buffer(tokens, "", [], partials, :mustache_root, :mustache_root, false)
-
-    handle_expr(buffer, :mustache_root, inner_vars)
+    build(tokens, bindings) |> List.flatten |> Enum.join
   end
 
-  ## private
 
-  defp generate_buffer([{ :text, _line, text } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    buffer = handle_text(buffer, text)
-
-    generate_buffer(t, buffer, vars, partials, parent, root_parent, dot_flg)
+  def escape(value) do
+    Mustache.Utils.escape_html(Mustache.Utils.to_binary(value))
   end
 
-  defp generate_buffer([{ :unescaped_variable, line, atom } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_unescaped_variable(buffer, var)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, dot_flg)
+  def get_value(nil, _) do
+    nil
   end
 
-  defp generate_buffer([{ :section, _line, atom } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    { rest, expr, inner_vars, inner_dot_flg } = generate_buffer(t, "", [], partials, atom, root_parent, false)
-
-    inner_vars = Enum.uniq(inner_vars)
-
-    new_buffer =
-      if inner_dot_flg do
-        if length(inner_vars) > 1 do
-          raise(SyntaxError, description: "dot and other cannot be together")
-        else
-          handle_expr_including_dot(expr, atom)
-        end
-      else
-        handle_expr(expr, atom, inner_vars)
-      end
-
-    buffer = handle_text(buffer, new_buffer)
-
-    generate_buffer(rest, buffer, inner_vars ++ [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :inverted_section, _line, atom } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    { rest, expr, inner_vars, inner_dot_flg } = generate_buffer(t, "", [], partials, atom, root_parent, false)
-
-    inner_vars = Enum.uniq(inner_vars)
-
-    new_buffer =
-      if inner_dot_flg do
-        if length(inner_vars) > 1 do
-          raise(SyntaxError, description: "dot and other cannot be together")
-        else
-          handle_inverted_expr_including_dot(expr, atom)
-        end
-      else
-        handle_inverted_expr(expr, atom, inner_vars)
-      end
-
-    buffer = handle_text(buffer, new_buffer)
-
-    generate_buffer(rest, buffer, inner_vars ++ [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :end_section, _line, parent } | t], buffer, vars, _partials, parent, _root_parent, dot_flg) do
-    { t, buffer, vars, dot_flg }
-  end
-
-  defp generate_buffer([{ :variable, line, atom } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_variable(buffer, var)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :dot, _line, _atom } | _], _buffer, _partials, _vars, root_parent, root_parent, _dot_flg) do
-    raise SyntaxError, description: "Top level dotted names is invalid"
-  end
-
-  defp generate_buffer([{ :dot, line, atom } | t], buffer, vars, partials, parent, root_parent, _dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_variable(buffer, var)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, true)
-  end
-
-  defp generate_buffer([{ :unescaped_dot, _line, _atom } | _], _buffer, _vars, _partials, root_parent, root_parent, _dot_flg) do
-    raise SyntaxError, description: "Top level dotted names is invalid"
-  end
-
-  defp generate_buffer([{ :unescaped_dot, line, atom } | t], buffer, vars, partials, parent, root_parent, _dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_unescaped_variable(buffer, var)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, true)
-  end
-
-  defp generate_buffer([{ :dotted_name, line, [atom|atoms] } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_dotted_name(buffer, var, atoms)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :unescaped_dotted_name, line, [atom|atoms] } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    var = { atom, [line: line], nil }
-    buffer = handle_unescaped_dotted_name(buffer, var, atoms)
-
-    generate_buffer(t, buffer, [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :dotted_name_section, _line, [atom|atoms] } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    { rest, expr, inner_vars, inner_dot_flg } = generate_buffer(t, "", [], partials, [atom|atoms], root_parent, false)
-
-    inner_vars = Enum.uniq(inner_vars)
-
-    new_buffer =
-      if inner_dot_flg do
-        if length(inner_vars) > 1 do
-          raise(SyntaxError, description: "dot and other cannot be together")
-        else
-          handle_dotted_expr_including_dot(expr, atom, atoms)
-      end
-      else
-        handle_dotted_expr(expr, atom, atoms, inner_vars)
-      end
-
-    buffer = handle_text(buffer, new_buffer)
-
-    generate_buffer(rest, buffer, inner_vars ++ [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :dotted_name_inverted_section, _line, [atom|atoms] } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    { rest, expr, inner_vars, inner_dot_flg } = generate_buffer(t, "", [], partials, [atom|atoms], root_parent, false)
-
-    inner_vars = Enum.uniq(inner_vars)
-
-    new_buffer =
-      if inner_dot_flg do
-        if length(inner_vars) > 1 do
-          raise(SyntaxError, description: "dot and other cannot be together")
-        else
-          handle_dotted_inverted_expr_including_dot(expr, atom, atoms)
-        end
-      else
-        handle_dotted_inverted_expr(expr, atom, atoms, inner_vars)
-      end
-
-    buffer = handle_text(buffer, new_buffer)
-
-    generate_buffer(rest, buffer, inner_vars ++ [atom|vars], partials, parent, root_parent, dot_flg)
-  end
-
-  defp generate_buffer([{ :partial, _line, atom, _index } | t], buffer, vars, partials, parent, root_parent, dot_flg) do
-    partial = partials[atom] || []
-
-    Enum.each partial, fn(token) ->
-      case token do
-        { :partial, _, ^atom, _ } -> raise SyntaxError, description: "Recursive partials is not supported"
-        _ -> :ok
-      end
+  def get_value(bindings, name) when is_map(bindings) and is_atom(name) do
+    ret = bindings[name]
+    if ret==nil do
+      ret = bindings[Atom.to_string(name)]
     end
-
-    generate_buffer(partial ++ t, buffer, vars, partials, parent, root_parent, dot_flg)
+    ret || ""
   end
 
-  defp generate_buffer([], buffer, vars, _partials, root_parent, root_parent, _dot_flg) do
-    { [], buffer, vars }
+  def get_value(bindings, name) when is_map(bindings) and is_list(name) do
+    Enum.reduce(name, bindings, fn(name, acc) ->
+                  get_value(acc, name)
+                end)
   end
 
-  # handler
-
-  defp handle_text(buffer, text) do
-    quote do: unquote(buffer) <> unquote(text)
+  def build([{:text,_,val}|rest], bindings) do
+    [val] ++ build(rest, bindings)
   end
 
-  defp handle_variable(buffer, var) do
-    quote do
-      var = unquote(var)
+  def build([{:variable,_,name}|rest], bindings) do
+    [get_value(bindings, name) |> escape] ++ build(rest, bindings)
+  end
 
-      if is_function(var, 0), do: var = var.()
+  def build([{:dotted_name,_,name}|rest], bindings) do
+    [get_value(bindings, name) |> escape] ++ build(rest, bindings)
+  end
 
-      unquote(buffer) <> Mustache.Utils.escape_html(Mustache.Utils.to_binary(var))
+  def build([{:unescaped_variable,_,name}|rest], bindings) do
+    [get_value(bindings, name)] ++ build(rest, bindings)
+  end
+  def build([{:unescaped_dotted_name,_,name}|rest], bindings) do
+    [get_value(bindings, name)] ++ build(rest, bindings)
+  end
+
+  def build([{:dotted_name_section, line,name}| rest], bindings) do
+    build([{:section, line, name}] ++ rest, bindings)
+  end
+
+  def build([{:section,_,name}|rest], bindings) do
+    bind = get_value(bindings, name)
+    idx = Enum.find_index(rest, fn(e) -> {:end_section,1,name} == e end)
+    elements = Enum.take(rest, idx)
+    if is_list(bind) do
+      ret = Enum.map(bind, fn(b) -> 
+                       build(elements, b)
+                     end)
+    else
+      ret = build(elements, bind)
     end
+    rest = Enum.drop(rest, idx+1)
+    [ret] ++ build(rest, bindings)
   end
 
-  defp handle_unescaped_variable(buffer, var) do
-    quote do
-      var = unquote(var)
+  def build([{:dotted_name_inverted_section, line,name}| rest], bindings) do
+    build([{:inverted_section, line, name}] ++ rest, bindings)
+  end
 
-      if is_function(var, 0), do: var = var.()
-
-      unquote(buffer) <> Mustache.Utils.to_binary(var)
+  def build([{:inverted_section,_, name}|rest], bindings) do
+    bind = get_value(bindings, name)
+    idx = Enum.find_index(rest, fn(e) -> {:end_section,1,name} == e end)
+    elements = Enum.take(rest, idx)
+    if bind == nil or bind == [] do
+      ret = build(elements, bind)
     end
+    rest = Enum.drop(rest, idx+1)
+    [ret] ++ build(rest, bindings)
   end
 
-  defp handle_dotted_name(buffer, var, atoms) do
-    quote do
-      var = adding = Mustache.Utils.recur_access(unquote(var), unquote(atoms))
-
-      if is_function(var, 0), do: var = var.()
-
-      unquote(buffer) <> Mustache.Utils.escape_html(Mustache.Utils.to_binary(var))
-    end
+  def build([{:partial,_,_name}|rest], bindings) do
+    [""] ++ build(rest, bindings)
   end
 
-  defp handle_unescaped_dotted_name(buffer, var, atoms) do
-    quote do
-      var = Mustache.Utils.recur_access(unquote(var), unquote(atoms))
-
-      if is_function(var, 0), do: var = var.()
-
-      unquote(buffer) <> Mustache.Utils.to_binary(var)
-    end
+  def build([token|rest], bindings) do
+    [inspect(token)] ++ build(rest, bindings)
   end
 
-  defp handle_expr(expr, atom, vars) do
-    var = { atom, [], nil }
-    real_vars = Enum.map vars, fn(atom) -> { atom, [], nil} end
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = unquote(var)
-      vars = unquote(vars)
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll(var, vars, binding)
-      Enum.map(coll, fun) |> Enum.join
-    end
-  end
-
-  defp handle_inverted_expr(expr, atom, vars) do
-    var = { atom, [], nil }
-    real_vars = Enum.map vars, fn(atom) -> { atom, [], nil} end
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = unquote(var)
-      vars = unquote(vars)
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll(var, vars, binding)
-      case coll do
-        [] -> fun.(Mustache.Utils.to_nilcoll(vars, binding))
-        _  -> ""
-      end
-    end
-  end
-
-  defp handle_expr_including_dot(expr, atom) do
-    var = { atom, [], nil }
-    real_vars = [{ :., [], nil}]
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = unquote(var)
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll_for_dot(var)
-      Enum.map(coll, fun) |> Enum.join
-    end
-  end
-
-  defp handle_inverted_expr_including_dot(_expr, _atom) do
-    quote do: ""
-  end
-
-  # almost same handle_expr
-  defp handle_dotted_expr(expr, atom, atoms, vars) do
-    top_var = { atom, [], nil }
-    real_vars = Enum.map vars, fn(atom) -> { atom, [], nil} end
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = Mustache.Utils.recur_access_for_dotted(unquote(top_var), unquote(atoms))
-      vars = unquote(vars)
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll(var, vars, binding)
-      Enum.map(coll, fun) |> Enum.join
-    end
-  end
-
-  # almost same handle_expr
-  defp handle_dotted_inverted_expr(expr, atom, atoms, vars) do
-    top_var = { atom, [], nil }
-    real_vars = Enum.map vars, fn(atom) -> { atom, [], nil} end
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = Mustache.Utils.recur_access_for_dotted(unquote(top_var), unquote(atoms))
-      vars = unquote(vars)
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll(var, vars, binding)
-      case coll do
-        [] -> fun.(Mustache.Utils.to_nilcoll(vars, binding))
-        _  -> ""
-      end
-    end
-  end
-
-  defp handle_dotted_expr_including_dot(expr, atom, atoms) do
-    top_var = { atom, [], nil }
-    real_vars = [{ :., [], nil}]
-    fun = quote do: fn(unquote(real_vars)) -> unquote(expr) end
-    quote do
-      var = Mustache.Utils.recur_access_for_dotted(unquote(top_var), unquote(atoms))
-      fun = unquote(fun)
-      coll = Mustache.Utils.to_coll_for_dot(var)
-      Enum.map(coll, fun) |> Enum.join
-    end
-  end
-
-  defp handle_dotted_inverted_expr_including_dot(_expr, _atom, _atoms) do
-    quote do: ""
+  def build([], _bindings) do
+    []
   end
 end
+
+
+
